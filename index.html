@@ -108,6 +108,31 @@
     <div id="connBanner"></div>
 
     <div class="panel">
+      <div class="panel-head"><h2>Product stock</h2></div>
+      <div class="panel-body">
+        <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
+          Production books cans, not cartons — enter <strong>available stock in cans</strong> here, once per can
+          description (not per order). The order queue below converts it to cartons automatically for comparison
+          against cartons ordered.
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="orders" id="productStockTable">
+            <thead>
+              <tr>
+                <th>Can description</th>
+                <th>Available stock (cans)</th>
+                <th>Cans per carton</th>
+                <th>Available stock (cartons)</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="productStockBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
       <div class="panel-head"><h2>Order queue</h2><span class="muted" id="queueCountTag" style="font-family:var(--mono);font-size:10.5px;"></span></div>
       <div class="panel-body">
         <div class="filter-tabs" id="filterTabs"></div>
@@ -121,7 +146,7 @@
                 <th>PO #</th>
                 <th>Product</th>
                 <th>Cartons</th>
-                <th>Available stock</th>
+                <th>Available stock (cartons)</th>
                 <th>Stock gap</th>
                 <th>Order date</th>
                 <th>Required ship date</th>
@@ -154,7 +179,7 @@
       </div>
       <div class="grid grid-4" style="margin-bottom:10px;">
         <label class="field">Cartons ordered<input id="o_cartons" type="number" min="0" step="1"></label>
-        <label class="field">Available stock (cartons)<span class="hint">manually updated</span><input id="o_availableStock" type="number" min="0" step="1"></label>
+        <label class="field">Available stock (cartons)<span class="hint">from Product stock panel</span><input id="o_availableStock" disabled></label>
         <label class="field">Order date received<input id="o_orderDate" type="date"></label>
         <label class="field">Preferred / required ship date<input id="o_requiredShipDate" type="date"></label>
       </div>
@@ -195,7 +220,7 @@
 
   <div class="modal-overlay" id="historyModal">
     <div class="modal-box" style="width:min(560px,92vw);">
-      <h2>Order history</h2>
+      <h2 id="historyModalTitle">Order history</h2>
       <div class="history-list" id="historyList"></div>
       <div class="actions"><button class="btn btn-flat" id="historyCloseBtn">Close</button></div>
     </div>
@@ -272,6 +297,7 @@ const SUPABASE_TABLE = 'kv_store';
 (function(){
   const $ = id => document.getElementById(id);
   const STORE_KEY = 'sales_order_register';
+  const PRODUCT_STOCK_KEY = 'product_stock_register';
 
   const PIECE_COUNTS = Array.from({length:50}, (_,i)=>i+1); // 1PC - 50PC
   const PACK_SIZES = ['80g','180g','200g','213g','234g'];
@@ -295,9 +321,11 @@ const SUPABASE_TABLE = 'kv_store';
   ];
 
   let orders = [];
+  let productStock = {}; // productLabel -> { availableCans, cansPerCarton, history }
   let activeTab = 'active';
   let editingId = null;
   let historyOrderId = null;
+  let historyProductLabel = null;
   let cancellingId = null;
 
   function toast(msg){
@@ -364,16 +392,39 @@ const SUPABASE_TABLE = 'kv_store';
     if(!ok) toast('Save failed -- please retry.');
     return ok;
   }
-  function logHistory(order, action, detail){
-    order.history = order.history || [];
-    order.history.push({ ts: Date.now(), action, detail: detail||'' });
+  async function loadProductStock(){
+    const raw = await window.storage.get(PRODUCT_STOCK_KEY).catch(()=>null);
+    try{ productStock = raw && raw.value ? JSON.parse(raw.value) : {}; }catch(e){ productStock = {}; }
+  }
+  async function persistProductStock(){
+    const ok = await window.storage.set(PRODUCT_STOCK_KEY, JSON.stringify(productStock)).catch(()=>false);
+    if(!ok) toast('Save failed -- please retry.');
+    return ok;
+  }
+  function logHistory(target, action, detail){
+    target.history = target.history || [];
+    target.history.push({ ts: Date.now(), action, detail: detail||'' });
   }
 
-  function stockGapInfo(order){
-    if(order.availableStock===''||order.availableStock==null) return null;
-    const avail = Number(order.availableStock)||0;
-    const need = Number(order.cartons)||0;
-    const diff = avail - need;
+  // Available stock lives per can description (shared across every order for that
+  // product), not per order -- production books cans against the product, not
+  // against any one customer's order line.
+  function getProductStock(productLabel){
+    return productStock[productLabel] || { availableCans:'', cansPerCarton:'', history:[] };
+  }
+  function availableCartonsFor(productLabel){
+    const ps = getProductStock(productLabel);
+    const cans = Number(ps.availableCans);
+    const perCarton = Number(ps.cansPerCarton);
+    if(!ps.availableCans && ps.availableCans!==0) return null;
+    if(!perCarton) return null; // cans/carton not set yet -- can't convert
+    return Math.floor(cans / perCarton);
+  }
+
+  function stockGapInfo(cartonsNeeded, availableCartons){
+    if(availableCartons===null || availableCartons===undefined) return null;
+    const need = Number(cartonsNeeded)||0;
+    const diff = availableCartons - need;
     if(diff < 0) return {label:'Short by '+Math.abs(diff), cls:'badge-fail'};
     if(diff === 0) return {label:'Exactly covered', cls:'badge-ok'};
     return {label:'Surplus of '+diff, cls:'badge-ok'};
@@ -398,6 +449,58 @@ const SUPABASE_TABLE = 'kv_store';
     } else {
       el.innerHTML = `<div class="conn-banner warn">Not yet connected to shared storage — orders are only saved in this browser. See README.md to connect Supabase so they show up on every device.</div>`;
     }
+  }
+
+  // ---------- product stock panel ----------
+  function distinctProductLabels(){
+    const seen = new Set();
+    const list = [];
+    orders.forEach(o=>{
+      if(o.productLabel && !seen.has(o.productLabel)){ seen.add(o.productLabel); list.push(o.productLabel); }
+    });
+    return list.sort();
+  }
+
+  function renderProductStockPanel(){
+    const labels = distinctProductLabels();
+    if(!labels.length){
+      $('productStockBody').innerHTML = `<tr class="empty-row"><td colspan="5">No products on any order yet.</td></tr>`;
+      return;
+    }
+    $('productStockBody').innerHTML = labels.map(label=>{
+      const ps = getProductStock(label);
+      const cartons = availableCartonsFor(label);
+      return `<tr>
+        <td>${label}</td>
+        <td><input type="number" min="0" step="1" style="width:90px;" data-cans-for="${label}" value="${ps.availableCans!==''&&ps.availableCans!=null?ps.availableCans:''}"></td>
+        <td><input type="number" min="1" step="1" style="width:90px;" data-per-carton-for="${label}" value="${ps.cansPerCarton!==''&&ps.cansPerCarton!=null?ps.cansPerCarton:''}"></td>
+        <td class="num">${cartons===null ? '<span class="muted">set both fields</span>' : cartons}</td>
+        <td><button class="btn btn-flat small-btn" data-product-history="${label}">History</button></td>
+      </tr>`;
+    }).join('');
+
+    $('productStockBody').querySelectorAll('[data-cans-for]').forEach(inp=>{
+      inp.addEventListener('change', ()=>onProductStockChange(inp.dataset.cansFor, 'availableCans', inp.value));
+    });
+    $('productStockBody').querySelectorAll('[data-per-carton-for]').forEach(inp=>{
+      inp.addEventListener('change', ()=>onProductStockChange(inp.dataset.perCartonFor, 'cansPerCarton', inp.value));
+    });
+    $('productStockBody').querySelectorAll('[data-product-history]').forEach(b=>{
+      b.addEventListener('click', ()=>openProductHistoryModal(b.dataset.productHistory));
+    });
+  }
+
+  async function onProductStockChange(productLabel, field, value){
+    const ps = productStock[productLabel] || { availableCans:'', cansPerCarton:'', history:[] };
+    const old = ps[field];
+    ps[field] = value === '' ? '' : Number(value);
+    const fieldLabel = field==='availableCans' ? 'Available stock (cans)' : 'Cans per carton';
+    logHistory(ps, 'stock_update', `${fieldLabel}: ${old===''||old==null?'(none)':old} → ${ps[field]===''?'(none)':ps[field]}`);
+    productStock[productLabel] = ps;
+    await persistProductStock();
+    toast('Product stock updated.');
+    renderProductStockPanel();
+    renderTable();
   }
 
   // ---------- tabs ----------
@@ -438,7 +541,8 @@ const SUPABASE_TABLE = 'kv_store';
     $('ordersBody').innerHTML = list.map(o=>{
       const urg = computedUrgency(o);
       const days = daysUntil(o.requiredShipDate);
-      const gap = stockGapInfo(o);
+      const availCartons = availableCartonsFor(o.productLabel);
+      const gap = stockGapInfo(o.cartons, availCartons);
       const statusCell = statusCellHtml(o);
       return `<tr class="${o.status==='cancelled'?'row-cancelled':''} ${!o.confirmedPriority && o.status!=='cancelled' && o.status!=='shipped' ?'row-untriaged':''}">
         <td>${confirmedPriorityBadge(o)}</td>
@@ -447,7 +551,7 @@ const SUPABASE_TABLE = 'kv_store';
         <td>${o.customerPO||''}</td>
         <td>${o.productLabel||''}</td>
         <td class="num">${o.cartons!==''&&o.cartons!=null?o.cartons:''}</td>
-        <td><input type="number" min="0" step="1" style="width:80px;" data-stock-for="${o.id}" value="${o.availableStock!==''&&o.availableStock!=null?o.availableStock:''}"></td>
+        <td class="num">${availCartons===null ? '<span class="muted">—</span>' : availCartons}</td>
         <td>${gap ? `<span class="badge ${gap.cls}">${gap.label}</span>` : '<span class="muted">—</span>'}</td>
         <td>${o.orderDate||''}</td>
         <td>${o.requiredShipDate||''}</td>
@@ -471,9 +575,6 @@ const SUPABASE_TABLE = 'kv_store';
     $('ordersBody').querySelectorAll('[data-confirm]').forEach(b=>{
       b.addEventListener('click', ()=>onStatusChange(b.dataset.confirm, 'confirmed'));
     });
-    $('ordersBody').querySelectorAll('[data-stock-for]').forEach(inp=>{
-      inp.addEventListener('change', ()=>onAvailableStockChange(inp.dataset.stockFor, inp.value));
-    });
   }
 
   async function onStatusChange(id, newStatus){
@@ -488,24 +589,12 @@ const SUPABASE_TABLE = 'kv_store';
     renderTable();
   }
 
-  async function onAvailableStockChange(id, value){
-    const o = orders.find(x=>x.id===id);
-    if(!o) return;
-    const old = o.availableStock;
-    o.availableStock = value === '' ? '' : Number(value);
-    o.updatedAt = Date.now();
-    logHistory(o, 'stock_update', `Available stock: ${old===''||old==null?'(none)':old} → ${o.availableStock===''?'(none)':o.availableStock}`);
-    await persistOrders();
-    toast('Available stock updated.');
-    renderTable();
-  }
-
   // ---------- order modal ----------
   function blankOrder(){
     return {
       id: null, createdAt: null, updatedAt: null,
       customer:'', customerPO:'', productLabel:'', pieces:'', productType:'', packSize:'',
-      cartons:'', availableStock:'', orderDate: todayISO(), requiredShipDate:'',
+      cartons:'', orderDate: todayISO(), requiredShipDate:'',
       requestedPriority:'standard', requestedPriorityReason:'',
       confirmedPriority:'', status:'pending_review', notes:'', enteredBy:'',
       history:[]
@@ -524,8 +613,10 @@ const SUPABASE_TABLE = 'kv_store';
     $('o_computedUrgency').value = urg ? urg.label : '—';
   }
   function updateStockGapField(){
-    const draft = { cartons: $('o_cartons').value, availableStock: $('o_availableStock').value };
-    const gap = stockGapInfo(draft);
+    const label = buildProductLabel($('o_pieces').value, $('o_productType').value, $('o_packSize').value);
+    const availCartons = label ? availableCartonsFor(label) : null;
+    $('o_availableStock').value = availCartons===null ? '—' : availCartons;
+    const gap = stockGapInfo($('o_cartons').value, availCartons);
     $('o_stockGap').value = gap ? gap.label : '—';
   }
 
@@ -540,7 +631,6 @@ const SUPABASE_TABLE = 'kv_store';
     $('o_productType').value = o.productType || '';
     $('o_packSize').value = o.packSize || '';
     $('o_cartons').value = o.cartons;
-    $('o_availableStock').value = o.availableStock;
     $('o_orderDate').value = o.orderDate || todayISO();
     $('o_requiredShipDate').value = o.requiredShipDate;
     $('o_requestedPriority').value = o.requestedPriority || 'standard';
@@ -593,7 +683,6 @@ const SUPABASE_TABLE = 'kv_store';
     o.packSize = packSize;
     o.productLabel = buildProductLabel(pieces, productType, packSize);
     o.cartons = $('o_cartons').value === '' ? '' : Number($('o_cartons').value);
-    o.availableStock = $('o_availableStock').value === '' ? '' : Number($('o_availableStock').value);
     o.orderDate = $('o_orderDate').value;
     o.requiredShipDate = requiredShipDate;
     o.requestedPriority = requestedPriority;
@@ -619,13 +708,22 @@ const SUPABASE_TABLE = 'kv_store';
   }
 
   // ---------- history modal ----------
-  function openHistoryModal(id){
-    historyOrderId = id;
-    const o = orders.find(x=>x.id===id);
-    const list = (o && o.history) || [];
+  function renderHistoryList(list){
     $('historyList').innerHTML = list.length
       ? list.slice().reverse().map(h=>`<div class="history-item"><div>${h.action.replace(/_/g,' ')}${h.detail?': '+h.detail:''}</div><div class="meta">${new Date(h.ts).toLocaleString()}</div></div>`).join('')
       : '<div class="history-item muted">No history yet.</div>';
+  }
+  function openHistoryModal(id){
+    historyOrderId = id; historyProductLabel = null;
+    $('historyModalTitle').textContent = 'Order history';
+    const o = orders.find(x=>x.id===id);
+    renderHistoryList((o && o.history) || []);
+    $('historyModal').classList.add('show');
+  }
+  function openProductHistoryModal(productLabel){
+    historyProductLabel = productLabel; historyOrderId = null;
+    $('historyModalTitle').textContent = `Product stock history — ${productLabel}`;
+    renderHistoryList(getProductStock(productLabel).history || []);
     $('historyModal').classList.add('show');
   }
 
@@ -651,6 +749,7 @@ const SUPABASE_TABLE = 'kv_store';
 
   function renderAll(){
     renderConnBanner();
+    renderProductStockPanel();
     renderTabs();
     renderTable();
   }
@@ -663,7 +762,9 @@ const SUPABASE_TABLE = 'kv_store';
     $('o_requestedPriority').addEventListener('change', updateReasonWrapVisibility);
     $('o_requiredShipDate').addEventListener('input', updateComputedUrgencyField);
     $('o_cartons').addEventListener('input', updateStockGapField);
-    $('o_availableStock').addEventListener('input', updateStockGapField);
+    $('o_pieces').addEventListener('change', updateStockGapField);
+    $('o_productType').addEventListener('change', updateStockGapField);
+    $('o_packSize').addEventListener('change', updateStockGapField);
     $('historyCloseBtn').addEventListener('click', ()=>$('historyModal').classList.remove('show'));
     $('cancelModalCloseBtn').addEventListener('click', ()=>$('cancelModal').classList.remove('show'));
     $('cancelModalConfirmBtn').addEventListener('click', confirmCancel);
@@ -672,6 +773,7 @@ const SUPABASE_TABLE = 'kv_store';
   (async function init(){
     wire();
     await loadOrders();
+    await loadProductStock();
     renderAll();
   })();
 })();

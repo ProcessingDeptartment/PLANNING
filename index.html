@@ -99,6 +99,8 @@
       <h1>Sales Order Register</h1>
     </div>
     <div class="sor-topline">
+      <button class="btn btn-ghost" id="navOrders">Order queue</button>
+      <button class="btn btn-ghost" id="navStock">Product stock</button>
       <button class="btn btn-primary" id="newOrderBtn">+ Add order</button>
     </div>
   </div>
@@ -107,57 +109,66 @@
 
     <div id="connBanner"></div>
 
-    <div class="panel">
-      <div class="panel-head"><h2>Product stock</h2></div>
-      <div class="panel-body">
-        <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
-          Production books cans, not cartons — enter <strong>available stock in cans</strong> here, once per can
-          description (not per order). The order queue below converts it to cartons automatically for comparison
-          against cartons ordered.
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="orders" id="productStockTable">
-            <thead>
-              <tr>
-                <th>Can description</th>
-                <th>Available stock (cans)</th>
-                <th>Cans per carton</th>
-                <th>Available stock (cartons)</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="productStockBody"></tbody>
-          </table>
+    <div id="ordersView">
+      <div class="panel">
+        <div class="panel-head"><h2>Order queue</h2><span class="muted" id="queueCountTag" style="font-family:var(--mono);font-size:10.5px;"></span></div>
+        <div class="panel-body">
+          <div class="filter-tabs" id="filterTabs"></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+            <label class="field" style="flex-direction:row;align-items:center;gap:6px;">Customer
+              <select id="customerFilter" style="width:auto;min-width:160px;"></select>
+            </label>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="orders">
+              <thead>
+                <tr>
+                  <th>Confirmed priority</th>
+                  <th>Customer urgency</th>
+                  <th>Customer</th>
+                  <th>PO #</th>
+                  <th>Product</th>
+                  <th>Cartons</th>
+                  <th>Stock allocated (cartons)</th>
+                  <th>Stock gap</th>
+                  <th>Order date</th>
+                  <th>Required ship date</th>
+                  <th>Days left</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head"><h2>Order queue</h2><span class="muted" id="queueCountTag" style="font-family:var(--mono);font-size:10.5px;"></span></div>
-      <div class="panel-body">
-        <div class="filter-tabs" id="filterTabs"></div>
-        <div style="overflow-x:auto;">
-          <table class="orders">
-            <thead>
-              <tr>
-                <th>Confirmed priority</th>
-                <th>Customer urgency</th>
-                <th>Customer</th>
-                <th>PO #</th>
-                <th>Product</th>
-                <th>Cartons</th>
-                <th>Available stock (cartons)</th>
-                <th>Stock gap</th>
-                <th>Order date</th>
-                <th>Required ship date</th>
-                <th>Days left</th>
-                <th>Status</th>
-                <th>Entered by</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="ordersBody"></tbody>
-          </table>
+    <div id="stockView" style="display:none;">
+      <div class="panel">
+        <div class="panel-head"><h2>Product stock</h2></div>
+        <div class="panel-body">
+          <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
+            Production books cans, not cartons — enter <strong>available stock in cans</strong> here, once per can
+            description (not per order). Cans per carton defaults to <strong>24</strong>; change it only when a
+            product differs. On the Order queue, stock is allocated to the <strong>most urgent order first</strong>,
+            converted to cartons automatically.
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="orders" id="productStockTable">
+              <thead>
+                <tr>
+                  <th>Can description</th>
+                  <th>Available stock (cans)</th>
+                  <th>Cans per carton</th>
+                  <th>Available stock (cartons)</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="productStockBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -179,13 +190,13 @@
       </div>
       <div class="grid grid-4" style="margin-bottom:10px;">
         <label class="field">Cartons ordered<input id="o_cartons" type="number" min="0" step="1"></label>
-        <label class="field">Available stock (cartons)<span class="hint">from Product stock panel</span><input id="o_availableStock" disabled></label>
+        <label class="field">Stock allocated (cartons)<span class="hint">most-urgent-first</span><input id="o_availableStock" disabled></label>
         <label class="field">Order date received<input id="o_orderDate" type="date"></label>
         <label class="field">Preferred / required ship date<input id="o_requiredShipDate" type="date"></label>
       </div>
       <div class="grid grid-2" style="margin-bottom:10px;">
-        <label class="field">Entered by<input id="o_enteredBy"></label>
         <label class="field">Stock gap (automatic)<input id="o_stockGap" disabled></label>
+        <label class="field"></label>
       </div>
       <div class="grid grid-2" style="margin-bottom:10px;">
         <label class="field">Requested priority (as told by customer / sales)
@@ -320,9 +331,13 @@ const SUPABASE_TABLE = 'kv_store';
     {key:'all', label:'All'}
   ];
 
+  const DEFAULT_CANS_PER_CARTON = 24;
+
   let orders = [];
   let productStock = {}; // productLabel -> { availableCans, cansPerCarton, history }
   let activeTab = 'active';
+  let customerFilter = '__all__';
+  let currentView = 'orders';
   let editingId = null;
   let historyOrderId = null;
   let historyProductLabel = null;
@@ -409,22 +424,66 @@ const SUPABASE_TABLE = 'kv_store';
   // Available stock lives per can description (shared across every order for that
   // product), not per order -- production books cans against the product, not
   // against any one customer's order line.
+  // Cans per carton defaults to the standard 24 unless a product has been given
+  // its own value -- so stock in cans converts to cartons out of the box.
   function getProductStock(productLabel){
-    return productStock[productLabel] || { availableCans:'', cansPerCarton:'', history:[] };
+    const ps = productStock[productLabel] || {};
+    return {
+      availableCans: (ps.availableCans!==undefined) ? ps.availableCans : '',
+      cansPerCarton: (ps.cansPerCarton!==undefined && ps.cansPerCarton!=='') ? ps.cansPerCarton : DEFAULT_CANS_PER_CARTON,
+      history: ps.history || []
+    };
   }
   function availableCartonsFor(productLabel){
     const ps = getProductStock(productLabel);
     const cans = Number(ps.availableCans);
     const perCarton = Number(ps.cansPerCarton);
-    if(!ps.availableCans && ps.availableCans!==0) return null;
-    if(!perCarton) return null; // cans/carton not set yet -- can't convert
+    if(!ps.availableCans && ps.availableCans!==0) return null; // no cans entered yet
+    if(!perCarton) return null;
     return Math.floor(cans / perCarton);
   }
 
-  function stockGapInfo(cartonsNeeded, availableCartons){
-    if(availableCartons===null || availableCartons===undefined) return null;
+  // Rank orders by urgency: confirmed priority first (untriaged bubbles to top so
+  // it isn't missed), then soonest required ship date.
+  function urgencyComparator(a,b){
+    const rank = p => p ? {P1:1,P2:2,P3:3,P4:4}[p] : 0;
+    const ra = rank(a.confirmedPriority), rb = rank(b.confirmedPriority);
+    if(ra!==rb) return ra-rb;
+    const da = daysUntil(a.requiredShipDate), db = daysUntil(b.requiredShipDate);
+    if(da===null && db===null) return 0;
+    if(da===null) return 1;
+    if(db===null) return -1;
+    return da-db;
+  }
+
+  // Stock for a product isn't offered to every order at once -- it's allocated to
+  // the MOST URGENT order first, then whatever is left flows to the next, etc.
+  // Only active (not shipped/cancelled) orders draw from stock.
+  function computeAllocations(){
+    const alloc = {}; // orderId -> { allocated:Number|null, known:Bool }
+    const byProduct = {};
+    orders.forEach(o=>{
+      if(!ACTIVE_STATUSES.includes(o.status)) return;
+      (byProduct[o.productLabel] = byProduct[o.productLabel] || []).push(o);
+    });
+    Object.keys(byProduct).forEach(label=>{
+      const avail = availableCartonsFor(label);
+      const known = avail !== null;
+      let remaining = known ? avail : 0;
+      byProduct[label].slice().sort(urgencyComparator).forEach(o=>{
+        const need = Number(o.cartons)||0;
+        const give = known ? Math.min(remaining, need) : null;
+        alloc[o.id] = { allocated: give, known };
+        if(known) remaining -= give;
+      });
+    });
+    return alloc;
+  }
+
+  function stockGapInfo(cartonsNeeded, allocatedCartons){
+    if(allocatedCartons===null || allocatedCartons===undefined) return null;
     const need = Number(cartonsNeeded)||0;
-    const diff = availableCartons - need;
+    const diff = allocatedCartons - need;
     if(diff < 0) return {label:'Short by '+Math.abs(diff), cls:'badge-fail'};
     if(diff === 0) return {label:'Exactly covered', cls:'badge-ok'};
     return {label:'Surplus of '+diff, cls:'badge-ok'};
@@ -513,36 +572,46 @@ const SUPABASE_TABLE = 'kv_store';
     });
   }
 
+  function distinctCustomers(){
+    const seen = new Set();
+    const list = [];
+    orders.forEach(o=>{ if(o.customer && !seen.has(o.customer)){ seen.add(o.customer); list.push(o.customer); } });
+    return list.sort();
+  }
+  function renderCustomerFilter(){
+    const sel = $('customerFilter');
+    const opts = ['<option value="__all__">All customers</option>']
+      .concat(distinctCustomers().map(c=>`<option value="${c}">${c}</option>`));
+    sel.innerHTML = opts.join('');
+    if(customerFilter!=='__all__' && !distinctCustomers().includes(customerFilter)) customerFilter='__all__';
+    sel.value = customerFilter;
+  }
+
   function filteredSortedOrders(){
     let list = orders.slice();
     if(activeTab==='active') list = list.filter(o=>ACTIVE_STATUSES.includes(o.status));
     else if(activeTab==='shipped') list = list.filter(o=>o.status==='shipped');
     else if(activeTab==='cancelled') list = list.filter(o=>o.status==='cancelled');
-    const rank = p => p ? {P1:1,P2:2,P3:3,P4:4}[p] : 0; // untriaged (0) bubbles to top so it isn't missed
-    list.sort((a,b)=>{
-      const ra = rank(a.confirmedPriority), rb = rank(b.confirmedPriority);
-      if(ra!==rb) return ra-rb;
-      const da = daysUntil(a.requiredShipDate), db = daysUntil(b.requiredShipDate);
-      if(da===null && db===null) return 0;
-      if(da===null) return 1;
-      if(db===null) return -1;
-      return da-db;
-    });
+    if(customerFilter!=='__all__') list = list.filter(o=>o.customer===customerFilter);
+    list.sort(urgencyComparator);
     return list;
   }
 
   function renderTable(){
+    renderCustomerFilter();
+    const alloc = computeAllocations();
     const list = filteredSortedOrders();
     $('queueCountTag').textContent = `${list.length} order(s)`;
     if(!list.length){
-      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="14">No orders in this view yet.</td></tr>`;
+      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="13">No orders in this view yet.</td></tr>`;
       return;
     }
     $('ordersBody').innerHTML = list.map(o=>{
       const urg = computedUrgency(o);
       const days = daysUntil(o.requiredShipDate);
-      const availCartons = availableCartonsFor(o.productLabel);
-      const gap = stockGapInfo(o.cartons, availCartons);
+      const a = alloc[o.id];
+      const allocated = a && a.known ? a.allocated : null;
+      const gap = stockGapInfo(o.cartons, allocated);
       const statusCell = statusCellHtml(o);
       return `<tr class="${o.status==='cancelled'?'row-cancelled':''} ${!o.confirmedPriority && o.status!=='cancelled' && o.status!=='shipped' ?'row-untriaged':''}">
         <td>${confirmedPriorityBadge(o)}</td>
@@ -551,13 +620,12 @@ const SUPABASE_TABLE = 'kv_store';
         <td>${o.customerPO||''}</td>
         <td>${o.productLabel||''}</td>
         <td class="num">${o.cartons!==''&&o.cartons!=null?o.cartons:''}</td>
-        <td class="num">${availCartons===null ? '<span class="muted">—</span>' : availCartons}</td>
+        <td class="num">${allocated===null ? '<span class="muted">—</span>' : allocated}</td>
         <td>${gap ? `<span class="badge ${gap.cls}">${gap.label}</span>` : '<span class="muted">—</span>'}</td>
         <td>${o.orderDate||''}</td>
         <td>${o.requiredShipDate||''}</td>
         <td class="num">${days===null?'':(o.status==='shipped'||o.status==='cancelled')?'—':days}</td>
         <td>${statusCell}</td>
-        <td>${o.enteredBy||''}</td>
         <td><div class="row-actions">
           <button class="btn btn-flat small-btn" data-edit="${o.id}">Edit</button>
           <button class="btn btn-flat small-btn" data-history="${o.id}">History</button>
@@ -596,7 +664,7 @@ const SUPABASE_TABLE = 'kv_store';
       customer:'', customerPO:'', productLabel:'', pieces:'', productType:'', packSize:'',
       cartons:'', orderDate: todayISO(), requiredShipDate:'',
       requestedPriority:'standard', requestedPriorityReason:'',
-      confirmedPriority:'', status:'pending_review', notes:'', enteredBy:'',
+      confirmedPriority:'', status:'pending_review', notes:'',
       history:[]
     };
   }
@@ -613,10 +681,13 @@ const SUPABASE_TABLE = 'kv_store';
     $('o_computedUrgency').value = urg ? urg.label : '—';
   }
   function updateStockGapField(){
-    const label = buildProductLabel($('o_pieces').value, $('o_productType').value, $('o_packSize').value);
-    const availCartons = label ? availableCartonsFor(label) : null;
-    $('o_availableStock').value = availCartons===null ? '—' : availCartons;
-    const gap = stockGapInfo($('o_cartons').value, availCartons);
+    let allocated = null;
+    if(editingId){
+      const a = computeAllocations()[editingId];
+      allocated = a && a.known ? a.allocated : null;
+    }
+    $('o_availableStock').value = allocated===null ? '—' : allocated;
+    const gap = stockGapInfo($('o_cartons').value, allocated);
     $('o_stockGap').value = gap ? gap.label : '—';
   }
 
@@ -637,7 +708,6 @@ const SUPABASE_TABLE = 'kv_store';
     $('o_requestedPriorityReason').value = o.requestedPriorityReason;
     $('o_confirmedPriority').value = o.confirmedPriority || '';
     $('o_notes').value = o.notes;
-    $('o_enteredBy').value = o.enteredBy;
     $('orderModalStatus').textContent = editingId ? `${o.id} · ${statusLabel(o.status)}` : 'New order';
     updateReasonWrapVisibility();
     updateComputedUrgencyField();
@@ -689,7 +759,6 @@ const SUPABASE_TABLE = 'kv_store';
     o.requestedPriorityReason = requestedPriorityReason;
     o.confirmedPriority = newConfirmed;
     o.notes = $('o_notes').value;
-    o.enteredBy = $('o_enteredBy').value.trim();
     o.updatedAt = Date.now();
 
     if(isNew){
@@ -747,15 +816,30 @@ const SUPABASE_TABLE = 'kv_store';
     renderTable();
   }
 
+  function setView(view){
+    currentView = view;
+    $('ordersView').style.display = view==='orders' ? '' : 'none';
+    $('stockView').style.display = view==='stock' ? '' : 'none';
+    $('navOrders').classList.toggle('btn-primary', view==='orders');
+    $('navOrders').classList.toggle('btn-ghost', view!=='orders');
+    $('navStock').classList.toggle('btn-primary', view==='stock');
+    $('navStock').classList.toggle('btn-ghost', view!=='stock');
+    $('newOrderBtn').style.display = view==='orders' ? '' : 'none';
+  }
+
   function renderAll(){
     renderConnBanner();
     renderProductStockPanel();
     renderTabs();
     renderTable();
+    setView(currentView);
   }
 
   function wire(){
     renderProductOptionLists();
+    $('navOrders').addEventListener('click', ()=>setView('orders'));
+    $('navStock').addEventListener('click', ()=>setView('stock'));
+    $('customerFilter').addEventListener('change', ()=>{ customerFilter = $('customerFilter').value; renderTable(); });
     $('newOrderBtn').addEventListener('click', ()=>openOrderModal(null));
     $('orderModalCancelBtn').addEventListener('click', closeOrderModal);
     $('orderModalSaveBtn').addEventListener('click', saveOrderFromModal);

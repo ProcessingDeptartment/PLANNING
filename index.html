@@ -83,6 +83,29 @@
   .toast{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--steel-dk); color:#fff; padding:9px 18px; border-radius:20px; font-size:12px; z-index:999; opacity:0; pointer-events:none; transition:opacity .25s; }
   .toast.show{ opacity:1; }
 
+  .cust-card{ border:1px solid var(--line-soft); border-radius:6px; margin-bottom:14px; overflow:hidden; }
+  .cust-card-head{ display:grid; grid-template-columns:180px 1fr 120px; gap:14px; align-items:center; padding:11px 14px; background:var(--steel-dk); color:#f4f1e8; }
+  .cust-card-head .cust-name{ font-weight:700; font-size:14px; }
+  .cust-card-head .cust-meta{ font-size:10.5px; color:#b9c3cc; font-family:var(--mono); text-align:right; }
+  .cust-card-body{ padding:8px 14px 12px; }
+  .po-group{ margin-top:8px; }
+  .po-group:first-child{ margin-top:2px; }
+  .prog-row{ display:grid; grid-template-columns:200px 1fr 110px; gap:12px; align-items:center; padding:3px 0; font-size:11.5px; }
+  .prog-row.po-head{ font-weight:700; color:var(--steel-dk); border-top:1px solid var(--line-soft); padding-top:8px; margin-top:4px; }
+  .po-group .prog-row.po-head:first-child{ border-top:none; margin-top:0; }
+  .prog-row.line{ color:#54606b; }
+  .prog-row.line .prog-label{ padding-left:16px; }
+  .prog-label{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prog-bar{ position:relative; height:15px; background:var(--line-soft); border-radius:8px; overflow:hidden; }
+  .prog-bar > span{ position:absolute; top:0; bottom:0; left:0; border-radius:8px; transition:width .2s; }
+  .prog-fill-ok{ background:var(--ok); }
+  .prog-fill-warn{ background:var(--warn); }
+  .prog-fill-low{ background:var(--fail); }
+  .prog-right{ text-align:right; font-family:var(--mono); }
+  .prog-right b{ font-weight:700; }
+  .prog-right .cnt{ color:#8a939b; font-size:10px; }
+  @media (max-width:640px){ .cust-card-head{ grid-template-columns:1fr; } .cust-card-head .cust-meta{ text-align:left; } .prog-row, .prog-row.po-head, .prog-row.line{ grid-template-columns:120px 1fr 84px; } }
+
   .modal-overlay{ display:none; position:fixed; inset:0; background:rgba(20,25,30,.5); z-index:500; align-items:center; justify-content:center; }
   .modal-overlay.show{ display:flex; }
   .modal-box{ background:#fff; border-radius:8px; width:min(720px,92vw); max-height:88vh; overflow:auto; padding:16px; }
@@ -101,6 +124,7 @@
     <div class="sor-topline">
       <button class="btn btn-ghost" id="navOrders">Order queue</button>
       <button class="btn btn-ghost" id="navStock">Product stock</button>
+      <button class="btn btn-ghost" id="navProgress">Progress</button>
       <button class="btn btn-primary" id="newOrderBtn">+ Add order</button>
     </div>
   </div>
@@ -169,6 +193,20 @@
               <tbody id="productStockBody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="progressView" style="display:none;">
+      <div class="panel">
+        <div class="panel-head"><h2>Order progress by customer</h2><span class="muted" style="font-family:var(--mono);font-size:10.5px;">cartons covered by available stock</span></div>
+        <div class="panel-body">
+          <div class="share-note" style="margin:0 0 12px;font-size:11px;color:#8a939b;">
+            Progress = cartons <strong>covered by available stock</strong> (allocated most-urgent-first) ÷ cartons
+            ordered. Shipped lines count as fully done. Each customer rolls up their <strong>orders (POs)</strong>,
+            and each PO breaks down into its <strong>product lines</strong>. Cancelled lines are excluded.
+          </div>
+          <div id="progressBody"></div>
         </div>
       </div>
     </div>
@@ -487,6 +525,85 @@ const SUPABASE_TABLE = 'kv_store';
     if(diff < 0) return {label:'Short by '+Math.abs(diff), cls:'badge-fail'};
     if(diff === 0) return {label:'Exactly covered', cls:'badge-ok'};
     return {label:'Surplus of '+diff, cls:'badge-ok'};
+  }
+
+  // ---------- progress (cartons covered by stock) ----------
+  // Cartons "fulfilled" for one order line: a shipped line is fully done; an
+  // active line is covered up to whatever stock was allocated to it; cancelled
+  // lines are excluded by the caller.
+  function fulfilledCartons(order, alloc){
+    const ordered = Number(order.cartons)||0;
+    if(order.status==='shipped') return ordered;
+    const a = alloc[order.id];
+    if(a && a.known) return Math.min(a.allocated, ordered);
+    return 0;
+  }
+  function pctOf(fulfilled, ordered){
+    if(ordered<=0) return fulfilled>0 ? 100 : 0;
+    return Math.round(100 * fulfilled / ordered);
+  }
+  function progressFillClass(pct){
+    if(pct>=100) return 'prog-fill-ok';
+    if(pct>=50) return 'prog-fill-warn';
+    return 'prog-fill-low';
+  }
+  function progressBarHtml(fulfilled, ordered){
+    const pct = pctOf(fulfilled, ordered);
+    const shown = Math.min(pct,100);
+    return `<div class="prog-bar"><span class="${progressFillClass(pct)}" style="width:${shown}%"></span></div>
+      <div class="prog-right"><b>${pct}%</b><div class="cnt">${fulfilled} / ${ordered} ctn</div></div>`;
+  }
+
+  function renderProgressView(){
+    const alloc = computeAllocations();
+    const lines = orders.filter(o=>o.status!=='cancelled');
+    if(!lines.length){
+      $('progressBody').innerHTML = `<div class="empty-row" style="text-align:center;color:#8a939b;padding:20px;">No orders yet.</div>`;
+      return;
+    }
+    // group: customer -> PO -> [lines]
+    const customers = {};
+    lines.forEach(o=>{
+      const cust = o.customer || '(no customer)';
+      const po = (o.customerPO && o.customerPO.trim()) ? o.customerPO.trim() : '(no PO number)';
+      ((customers[cust] = customers[cust] || {})[po] = customers[cust][po] || []).push(o);
+    });
+
+    $('progressBody').innerHTML = Object.keys(customers).sort().map(cust=>{
+      const pos = customers[cust];
+      let custOrdered=0, custFulfilled=0;
+      const poHtml = Object.keys(pos).sort().map(po=>{
+        const poLines = pos[po];
+        let poOrdered=0, poFulfilled=0;
+        const lineHtml = poLines.slice().sort(urgencyComparator).map(o=>{
+          const ordered = Number(o.cartons)||0;
+          const ful = fulfilledCartons(o, alloc);
+          poOrdered += ordered; poFulfilled += ful;
+          const shippedTag = o.status==='shipped' ? ' <span class="badge badge-steel">shipped</span>' : '';
+          return `<div class="prog-row line">
+            <div class="prog-label">${o.productLabel||'(no product)'}${shippedTag}</div>
+            ${progressBarHtml(ful, ordered)}
+          </div>`;
+        }).join('');
+        custOrdered += poOrdered; custFulfilled += poFulfilled;
+        return `<div class="po-group">
+          <div class="prog-row po-head">
+            <div class="prog-label">PO: ${po}</div>
+            ${progressBarHtml(poFulfilled, poOrdered)}
+          </div>
+          ${lineHtml}
+        </div>`;
+      }).join('');
+      const custPct = pctOf(custFulfilled, custOrdered);
+      return `<div class="cust-card">
+        <div class="cust-card-head">
+          <div class="cust-name">${cust}</div>
+          <div class="prog-bar" style="height:16px;"><span class="${progressFillClass(custPct)}" style="width:${Math.min(custPct,100)}%"></span></div>
+          <div class="cust-meta">${custPct}% · ${custFulfilled}/${custOrdered} ctn</div>
+        </div>
+        <div class="cust-card-body">${poHtml}</div>
+      </div>`;
+    }).join('');
   }
 
   // ---------- option lists ----------
@@ -816,15 +933,22 @@ const SUPABASE_TABLE = 'kv_store';
     renderTable();
   }
 
+  const VIEWS = ['orders','stock','progress'];
   function setView(view){
     currentView = view;
     $('ordersView').style.display = view==='orders' ? '' : 'none';
     $('stockView').style.display = view==='stock' ? '' : 'none';
-    $('navOrders').classList.toggle('btn-primary', view==='orders');
-    $('navOrders').classList.toggle('btn-ghost', view!=='orders');
-    $('navStock').classList.toggle('btn-primary', view==='stock');
-    $('navStock').classList.toggle('btn-ghost', view!=='stock');
+    $('progressView').style.display = view==='progress' ? '' : 'none';
+    const navMap = { orders:'navOrders', stock:'navStock', progress:'navProgress' };
+    VIEWS.forEach(v=>{
+      $(navMap[v]).classList.toggle('btn-primary', v===view);
+      $(navMap[v]).classList.toggle('btn-ghost', v!==view);
+    });
     $('newOrderBtn').style.display = view==='orders' ? '' : 'none';
+    // re-render the target view with fresh data each time it's opened
+    if(view==='stock') renderProductStockPanel();
+    else if(view==='progress') renderProgressView();
+    else renderTable();
   }
 
   function renderAll(){
@@ -832,6 +956,7 @@ const SUPABASE_TABLE = 'kv_store';
     renderProductStockPanel();
     renderTabs();
     renderTable();
+    renderProgressView();
     setView(currentView);
   }
 
@@ -839,6 +964,7 @@ const SUPABASE_TABLE = 'kv_store';
     renderProductOptionLists();
     $('navOrders').addEventListener('click', ()=>setView('orders'));
     $('navStock').addEventListener('click', ()=>setView('stock'));
+    $('navProgress').addEventListener('click', ()=>setView('progress'));
     $('customerFilter').addEventListener('change', ()=>{ customerFilter = $('customerFilter').value; renderTable(); });
     $('newOrderBtn').addEventListener('click', ()=>openOrderModal(null));
     $('orderModalCancelBtn').addEventListener('click', closeOrderModal);

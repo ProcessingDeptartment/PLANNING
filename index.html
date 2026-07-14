@@ -540,11 +540,17 @@ const SUPABASE_TABLE = 'kv_store';
     if(pct>=50) return 'prog-fill-warn';
     return 'prog-fill-low';
   }
-  function progressBarHtml(fulfilled, ordered){
-    const pct = pctOf(fulfilled, ordered);
+  // Cans-per-carton for a product (defaults to the standard 24).
+  function perCartonFor(productLabel){
+    return Number(getProductStock(productLabel).cansPerCarton) || DEFAULT_CANS_PER_CARTON;
+  }
+  // t = { fulCtn, ordCtn, fulCans, ordCans } -- % is carton-based (identical to
+  // can-based at line level; at rollups the carton ratio is the headline).
+  function progressBarHtml(t){
+    const pct = pctOf(t.fulCtn, t.ordCtn);
     const shown = Math.min(pct,100);
     return `<div class="prog-bar"><span class="${progressFillClass(pct)}" style="width:${shown}%"></span></div>
-      <div class="prog-right"><b>${pct}%</b><div class="cnt">${fulfilled} / ${ordered} ctn</div></div>`;
+      <div class="prog-right"><b>${pct}%</b><div class="cnt">${t.fulCtn} / ${t.ordCtn} ctn</div><div class="cnt">${t.fulCans} / ${t.ordCans} cans</div></div>`;
   }
 
   function renderProgressView(){
@@ -561,38 +567,43 @@ const SUPABASE_TABLE = 'kv_store';
       const po = (o.customerPO && o.customerPO.trim()) ? o.customerPO.trim() : '(no PO number)';
       ((customers[cust] = customers[cust] || {})[po] = customers[cust][po] || []).push(o);
     });
+    const addTo = (acc, t) => { acc.fulCtn+=t.fulCtn; acc.ordCtn+=t.ordCtn; acc.fulCans+=t.fulCans; acc.ordCans+=t.ordCans; };
 
     $('progressBody').innerHTML = Object.keys(customers).sort().map(cust=>{
       const pos = customers[cust];
-      let custOrdered=0, custFulfilled=0;
+      const custTot = { fulCtn:0, ordCtn:0, fulCans:0, ordCans:0 };
       const poHtml = Object.keys(pos).sort().map(po=>{
-        const poLines = pos[po];
-        let poOrdered=0, poFulfilled=0;
-        const lineHtml = poLines.slice().sort(urgencyComparator).map(o=>{
-          const ordered = Number(o.cartons)||0;
-          const ful = fulfilledCartons(o, alloc);
-          poOrdered += ordered; poFulfilled += ful;
+        const poTot = { fulCtn:0, ordCtn:0, fulCans:0, ordCans:0 };
+        const lineHtml = pos[po].slice().sort(urgencyComparator).map(o=>{
+          const perCarton = perCartonFor(o.productLabel);
+          const t = {
+            ordCtn: Number(o.cartons)||0,
+            fulCtn: fulfilledCartons(o, alloc)
+          };
+          t.ordCans = t.ordCtn * perCarton;
+          t.fulCans = t.fulCtn * perCarton;
+          addTo(poTot, t);
           const shippedTag = o.status==='shipped' ? ' <span class="badge badge-steel">shipped</span>' : '';
           return `<div class="prog-row line">
             <div class="prog-label">${o.productLabel||'(no product)'}${shippedTag}</div>
-            ${progressBarHtml(ful, ordered)}
+            ${progressBarHtml(t)}
           </div>`;
         }).join('');
-        custOrdered += poOrdered; custFulfilled += poFulfilled;
+        addTo(custTot, poTot);
         return `<div class="po-group">
           <div class="prog-row po-head">
             <div class="prog-label">PO: ${po}</div>
-            ${progressBarHtml(poFulfilled, poOrdered)}
+            ${progressBarHtml(poTot)}
           </div>
           ${lineHtml}
         </div>`;
       }).join('');
-      const custPct = pctOf(custFulfilled, custOrdered);
+      const custPct = pctOf(custTot.fulCtn, custTot.ordCtn);
       return `<div class="cust-card">
         <div class="cust-card-head">
           <div class="cust-name">${cust}</div>
           <div class="prog-bar" style="height:16px;"><span class="${progressFillClass(custPct)}" style="width:${Math.min(custPct,100)}%"></span></div>
-          <div class="cust-meta">${custPct}% · ${custFulfilled}/${custOrdered} ctn</div>
+          <div class="cust-meta">${custPct}% · ${custTot.fulCtn}/${custTot.ordCtn} ctn · ${custTot.fulCans}/${custTot.ordCans} cans</div>
         </div>
         <div class="cust-card-body">${poHtml}</div>
       </div>`;

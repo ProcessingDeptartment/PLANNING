@@ -174,9 +174,7 @@
         <div class="panel-head"><h2>Product stock</h2></div>
         <div class="panel-body">
           <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
-            Production books cans, not cartons — enter <strong>available stock in cans</strong> here, once per can
-            description (not per order). Cans per carton defaults to <strong>24</strong>; change it only when a
-            product differs. On the Order queue, stock is allocated to the <strong>most urgent order first</strong>,
+            Enter <strong>available stock in cans</strong> here. Stock is allocated to the <strong>most urgent order first</strong>,
             converted to cartons automatically.
           </div>
           <div style="overflow-x:auto;">
@@ -201,11 +199,6 @@
       <div class="panel">
         <div class="panel-head"><h2>Order progress by customer</h2><span class="muted" style="font-family:var(--mono);font-size:10.5px;">cartons covered by available stock</span></div>
         <div class="panel-body">
-          <div class="share-note" style="margin:0 0 12px;font-size:11px;color:#8a939b;">
-            Progress = cartons <strong>covered by available stock</strong> (allocated most-urgent-first) ÷ cartons
-            ordered. Shipped lines count as fully done. Each customer rolls up their <strong>orders (POs)</strong>,
-            and each PO breaks down into its <strong>product lines</strong>. Cancelled lines are excluded.
-          </div>
           <div id="progressBody"></div>
         </div>
       </div>

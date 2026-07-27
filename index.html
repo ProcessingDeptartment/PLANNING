@@ -105,8 +105,10 @@
   .prog-right b{ font-weight:700; }
   .prog-right .cnt{ color:#8a939b; font-size:10px; }
 
-  .cust-card-head-simple{ display:flex; justify-content:space-between; align-items:center; padding:11px 14px; background:var(--steel-dk); color:#f4f1e8; gap:14px; }
-  .cust-card-head-simple .cust-name{ font-weight:700; font-size:14px; flex:1; }
+  .cust-card-head-simple{ display:flex; justify-content:space-between; align-items:center; padding:11px 14px; background:var(--steel-dk); color:#f4f1e8; gap:12px; }
+  .cust-card-head-simple .cust-name{ font-weight:700; font-size:14px; min-width:120px; }
+  .prog-bar-simple{ flex:1; height:12px; background:rgba(255,255,255,.15); border-radius:6px; overflow:hidden; min-width:80px; position:relative; }
+  .prog-bar-simple > span{ position:absolute; top:0; bottom:0; left:0; border-radius:6px; transition:width .2s; }
   .cust-card-head-simple .progress-pct{ font-family:var(--mono); font-size:13px; font-weight:700; min-width:45px; text-align:right; }
   .cust-card-head-simple .breakdown-btn{ background:rgba(255,255,255,.15); color:#f4f1e8; border:1px solid rgba(255,255,255,.25); padding:5px 10px; font-size:11px; border-radius:3px; cursor:pointer; white-space:nowrap; }
   .cust-card-head-simple .breakdown-btn:hover{ background:rgba(255,255,255,.25); }
@@ -608,9 +610,11 @@ const SUPABASE_TABLE = 'kv_store';
       }).join('');
       const custPct = pctOf(custTot.fulCtn, custTot.ordCtn);
       const custCardId = 'cust-card-' + cust.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const barFill = progressFillClass(custPct);
       return `<div class="cust-card">
         <div class="cust-card-head-simple">
           <div class="cust-name">${cust}</div>
+          <div class="prog-bar-simple"><span class="${barFill}" style="width:${Math.min(custPct,100)}%"></span></div>
           <div class="progress-pct">${custPct}%</div>
           <button class="breakdown-btn" data-toggle-breakdown="${custCardId}">View breakdown</button>
         </div>

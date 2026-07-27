@@ -104,7 +104,15 @@
   .prog-right{ text-align:right; font-family:var(--mono); }
   .prog-right b{ font-weight:700; }
   .prog-right .cnt{ color:#8a939b; font-size:10px; }
-  @media (max-width:640px){ .cust-card-head{ grid-template-columns:1fr; } .cust-card-head .cust-meta{ text-align:left; } .prog-row, .prog-row.po-head, .prog-row.line{ grid-template-columns:120px 1fr 84px; } }
+
+  .cust-card-head-simple{ display:flex; justify-content:space-between; align-items:center; padding:11px 14px; background:var(--steel-dk); color:#f4f1e8; gap:14px; }
+  .cust-card-head-simple .cust-name{ font-weight:700; font-size:14px; flex:1; }
+  .cust-card-head-simple .progress-pct{ font-family:var(--mono); font-size:13px; font-weight:700; min-width:45px; text-align:right; }
+  .cust-card-head-simple .breakdown-btn{ background:rgba(255,255,255,.15); color:#f4f1e8; border:1px solid rgba(255,255,255,.25); padding:5px 10px; font-size:11px; border-radius:3px; cursor:pointer; white-space:nowrap; }
+  .cust-card-head-simple .breakdown-btn:hover{ background:rgba(255,255,255,.25); }
+  .cust-breakdown{ display:none; padding:8px 14px 12px; }
+  .cust-breakdown.show{ display:block; }
+  @media (max-width:640px){ .cust-card-head{ grid-template-columns:1fr; } .cust-card-head .cust-meta{ text-align:left; } .prog-row, .prog-row.po-head, .prog-row.line{ grid-template-columns:120px 1fr 84px; } .cust-card-head-simple{ flex-direction:column; align-items:flex-start; } .cust-card-head-simple .progress-pct{ align-self:flex-start; } }
 
   .modal-overlay{ display:none; position:fixed; inset:0; background:rgba(20,25,30,.5); z-index:500; align-items:center; justify-content:center; }
   .modal-overlay.show{ display:flex; }
@@ -599,15 +607,27 @@ const SUPABASE_TABLE = 'kv_store';
         </div>`;
       }).join('');
       const custPct = pctOf(custTot.fulCtn, custTot.ordCtn);
+      const custCardId = 'cust-card-' + cust.replace(/[^a-z0-9]/gi, '-').toLowerCase();
       return `<div class="cust-card">
-        <div class="cust-card-head">
+        <div class="cust-card-head-simple">
           <div class="cust-name">${cust}</div>
-          <div class="prog-bar" style="height:16px;"><span class="${progressFillClass(custPct)}" style="width:${Math.min(custPct,100)}%"></span></div>
-          <div class="cust-meta">${custPct}% · ${custTot.fulCtn}/${custTot.ordCtn} ctn · ${custTot.fulCans}/${custTot.ordCans} cans</div>
+          <div class="progress-pct">${custPct}%</div>
+          <button class="breakdown-btn" data-toggle-breakdown="${custCardId}">View breakdown</button>
         </div>
-        <div class="cust-card-body">${poHtml}</div>
+        <div class="cust-breakdown" id="${custCardId}">${poHtml}</div>
       </div>`;
     }).join('');
+
+    $('progressBody').querySelectorAll('[data-toggle-breakdown]').forEach(btn=>{
+      btn.addEventListener('click', function(){
+        const targetId = this.dataset.toggleBreakdown;
+        const breakdown = $('progressBody').querySelector('#' + targetId);
+        if(breakdown){
+          breakdown.classList.toggle('show');
+          this.textContent = breakdown.classList.contains('show') ? 'Hide breakdown' : 'View breakdown';
+        }
+      });
+    });
   }
 
   // ---------- option lists ----------

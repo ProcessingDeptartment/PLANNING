@@ -163,8 +163,6 @@
                   <th>PO #</th>
                   <th>Product</th>
                   <th>Cartons</th>
-                  <th>Stock allocated (cartons)</th>
-                  <th>Stock gap</th>
                   <th>Order date</th>
                   <th>Required ship date</th>
                   <th>Days left</th>
@@ -346,7 +344,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   const PRODUCT_STOCK_KEY = 'product_stock_register';
 
   const PIECE_COUNTS = Array.from({length:50}, (_,i)=>i+1); // 1PC - 50PC
-  const PACK_SIZES = ['80g','180g','200g','213g','234g'];
+  const PACK_SIZES = ['80g','150g','180g','200g','213g','234g'];
   const PRODUCT_TYPES = ['Brine','Braised'];
 
   const STATUSES = [
@@ -734,19 +732,15 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
 
   function renderTable(){
     renderCustomerFilter();
-    const alloc = computeAllocations();
     const list = filteredSortedOrders();
     $('queueCountTag').textContent = `${list.length} order(s)`;
     if(!list.length){
-      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="13">No orders in this view yet.</td></tr>`;
+      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="11">No orders in this view yet.</td></tr>`;
       return;
     }
     $('ordersBody').innerHTML = list.map(o=>{
       const urg = computedUrgency(o);
       const days = daysUntil(o.requiredShipDate);
-      const a = alloc[o.id];
-      const allocated = a && a.known ? a.allocated : null;
-      const gap = stockGapInfo(o.cartons, allocated);
       const statusCell = statusCellHtml(o);
       return `<tr class="${o.status==='cancelled'?'row-cancelled':''} ${!o.confirmedPriority && o.status!=='cancelled' && o.status!=='shipped' ?'row-untriaged':''}">
         <td>${confirmedPriorityBadge(o)}</td>
@@ -755,8 +749,6 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
         <td>${o.customerPO||''}</td>
         <td>${o.productLabel||''}</td>
         <td class="num">${o.cartons!==''&&o.cartons!=null?o.cartons:''}</td>
-        <td class="num">${allocated===null ? '<span class="muted">—</span>' : allocated}</td>
-        <td>${gap ? `<span class="badge ${gap.cls}">${gap.label}</span>` : '<span class="muted">—</span>'}</td>
         <td>${o.orderDate||''}</td>
         <td>${o.requiredShipDate||''}</td>
         <td class="num">${days===null?'':(o.status==='shipped'||o.status==='cancelled')?'—':days}</td>

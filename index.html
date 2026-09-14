@@ -293,15 +293,15 @@
 
 <script>
 /*
- * Storage: this browser's localStorage only. No external service, no
- * database -- keeps this small tool simple and self-contained.
+ * Storage: a tiny Neon Function (functions/orders-api.ts) backed by Postgres.
+ * Everyone who opens this page reads/writes the same shared data -- no
+ * login system, so treat this like a shared spreadsheet (see README.md).
+ * Falls back to this browser's localStorage if the API is unreachable.
  */
-const SUPABASE_URL = '';
-const SUPABASE_ANON_KEY = '';
-const SUPABASE_TABLE = 'kv_store';
+const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2.aws.neon.tech';
 
 (function(){
-  function supabaseConfigured(){ return !!(SUPABASE_URL && SUPABASE_ANON_KEY); }
+  function apiConfigured(){ return !!API_URL; }
 
   function localGet(key){
     try{ const raw = window.localStorage.getItem('sor_local:'+key); return raw===null ? null : {value:raw}; }
@@ -313,33 +313,30 @@ const SUPABASE_TABLE = 'kv_store';
   }
 
   async function get(key){
-    if(!supabaseConfigured()) return localGet(key);
+    if(!apiConfigured()) return localGet(key);
     try{
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}?key=eq.${encodeURIComponent(key)}&select=value`, {
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-      });
-      if(!res.ok) throw new Error('Supabase GET failed: '+res.status);
-      const rows = await res.json();
-      return rows[0] ? { value: rows[0].value } : null;
-    }catch(e){ console.error('storage get failed', e); return null; }
+      const res = await fetch(`${API_URL}/kv?key=${encodeURIComponent(key)}`);
+      if(!res.ok) throw new Error('API GET failed: '+res.status);
+      const data = await res.json();
+      return data.value === null ? null : { value: data.value };
+    }catch(e){ console.error('storage get failed', e); return localGet(key); }
   }
 
   async function set(key, value){
-    if(!supabaseConfigured()) return localSet(key, value);
+    if(!apiConfigured()) return localSet(key, value);
     try{
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}?on_conflict=key`, {
+      const res = await fetch(`${API_URL}/kv`, {
         method: 'POST',
-        headers: {
-          apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify([{ key, value }])
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value })
       });
-      return res.ok;
-    }catch(e){ console.error('storage set failed', e); return false; }
+      if(!res.ok) throw new Error('API POST failed: '+res.status);
+      localSet(key, value);
+      return true;
+    }catch(e){ console.error('storage set failed', e); return localSet(key, value); }
   }
 
-  window.storage = { get, set, supabaseConfigured };
+  window.storage = { get, set, supabaseConfigured: apiConfigured };
 })();
 </script>
 <script>
@@ -645,7 +642,7 @@ const SUPABASE_TABLE = 'kv_store';
   // ---------- connection banner ----------
   function renderConnBanner(){
     const el = $('connBanner');
-    el.innerHTML = `<div class="conn-banner warn">Saved in this browser only — orders won't show up on other devices.</div>`;
+    el.innerHTML = `<div class="conn-banner ok">Connected to shared storage — orders are visible on every device.</div>`;
   }
 
   // ---------- product stock panel ----------

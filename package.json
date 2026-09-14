@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@neon/config": "^1.4.2",
+    "@neon/functions": "^0.10.0",
+    "hono": "^4.13.7",
+    "pg": "^8.23.0"
+  }
+}

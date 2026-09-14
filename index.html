@@ -293,14 +293,11 @@
 
 <script>
 /*
- * ===== SUPABASE CONFIG =====
- * Paste your Supabase project URL and anon/public API key below to make this
- * register shared across every device. Until both are filled in, it falls
- * back to this browser's localStorage only (so it still works, just not
- * shared) -- see README.md for the exact setup steps.
+ * Storage: this browser's localStorage only. No external service, no
+ * database -- keeps this small tool simple and self-contained.
  */
-const SUPABASE_URL = 'https://agzwzqgeuvaelpirfaql.supabase.co';         // e.g. 'https://xxxxxxxx.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFnend6cWdldXZhZWxwaXJmYXFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2MDAzMDcsImV4cCI6MjA5OTE3NjMwN30.Mp6YnFDoFAOUH9rvyr5LNJt6-d1AAN9NJZvrYG8M7w4';    // Settings -> API -> "anon" "public" key
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
 const SUPABASE_TABLE = 'kv_store';
 
 (function(){
@@ -648,11 +645,7 @@ const SUPABASE_TABLE = 'kv_store';
   // ---------- connection banner ----------
   function renderConnBanner(){
     const el = $('connBanner');
-    if(window.storage.supabaseConfigured()){
-      el.innerHTML = `<div class="conn-banner ok">Connected to shared storage — orders are visible on every device.</div>`;
-    } else {
-      el.innerHTML = `<div class="conn-banner warn">Not yet connected to shared storage — orders are only saved in this browser. See README.md to connect Supabase so they show up on every device.</div>`;
-    }
+    el.innerHTML = `<div class="conn-banner warn">Saved in this browser only — orders won't show up on other devices.</div>`;
   }
 
   // ---------- product stock panel ----------

@@ -163,6 +163,7 @@
                   <th>PO #</th>
                   <th>Product</th>
                   <th>Cartons</th>
+                  <th>Shipped</th>
                   <th>Order date</th>
                   <th>Required ship date</th>
                   <th>Days left</th>
@@ -746,12 +747,23 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
     return list;
   }
 
+  // Cartons shipped against this order (shipped cans allocated most-urgent-first).
+  function shippedCellHtml(o, alloc){
+    if(o.status==='cancelled') return '—';
+    const ordered = Number(o.cartons)||0;
+    const done = o.status==='shipped' ? ordered : ((alloc[o.id]||{}).shipped||0);
+    if(!ordered && !done) return '—';
+    const cls = done>=ordered && ordered>0 ? 'badge-ok' : done>0 ? 'badge-warn' : 'badge-muted';
+    return `<span class="badge ${cls}">${done} / ${ordered}</span>`;
+  }
+
   function renderTable(){
     renderCustomerFilter();
     const list = filteredSortedOrders();
+    const alloc = computeAllocations();
     $('queueCountTag').textContent = `${list.length} order(s)`;
     if(!list.length){
-      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="11">No orders in this view yet.</td></tr>`;
+      $('ordersBody').innerHTML = `<tr class="empty-row"><td colspan="12">No orders in this view yet.</td></tr>`;
       return;
     }
     $('ordersBody').innerHTML = list.map(o=>{
@@ -765,6 +777,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
         <td>${o.customerPO||''}</td>
         <td>${o.productLabel||''}</td>
         <td class="num">${o.cartons!==''&&o.cartons!=null?o.cartons:''}</td>
+        <td class="num">${shippedCellHtml(o, alloc)}</td>
         <td>${o.orderDate||''}</td>
         <td>${o.requiredShipDate||''}</td>
         <td class="num">${days===null?'':(o.status==='shipped'||o.status==='cancelled')?'—':days}</td>

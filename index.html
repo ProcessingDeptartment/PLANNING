@@ -182,17 +182,19 @@
         <div class="panel-head"><h2>Product stock</h2></div>
         <div class="panel-body">
           <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
-            Enter <strong>available stock in cans</strong> here. Stock is allocated to the <strong>most urgent order first</strong>,
-            converted to cartons automatically.
+            Enter the cans <strong>produced</strong> and the cans <strong>shipped</strong> (invoiced out). <strong>Stock on hand = produced &minus; shipped</strong>.
+            Stock on hand is allocated to the <strong>most urgent order first</strong>, converted to cartons automatically.
           </div>
           <div style="overflow-x:auto;">
             <table class="orders" id="productStockTable">
               <thead>
                 <tr>
                   <th>Can description</th>
-                  <th>Available stock (cans)</th>
+                  <th>Produced (cans)</th>
+                  <th>Shipped (cans)</th>
+                  <th>Stock on hand (cans)</th>
                   <th>Cans per carton</th>
-                  <th>Available stock (cartons)</th>
+                  <th>Stock on hand (cartons)</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -367,7 +369,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   const DEFAULT_CANS_PER_CARTON = 24;
 
   let orders = [];
-  let productStock = {}; // productLabel -> { availableCans, cansPerCarton, history }
+  let productStock = {}; // productLabel -> { availableCans (= produced), shippedCans, cansPerCarton, history }
   let activeTab = 'active';
   let customerFilter = '__all__';
   let currentView = 'orders';
@@ -463,17 +465,23 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
     const ps = productStock[productLabel] || {};
     return {
       availableCans: (ps.availableCans!==undefined) ? ps.availableCans : '',
+      shippedCans: (ps.shippedCans!==undefined) ? ps.shippedCans : '',
       cansPerCarton: (ps.cansPerCarton!==undefined && ps.cansPerCarton!=='') ? ps.cansPerCarton : DEFAULT_CANS_PER_CARTON,
       history: ps.history || []
     };
   }
+  // On hand = produced (stored as availableCans) minus shipped. null until produced is entered.
+  function onHandCans(productLabel){
+    const ps = getProductStock(productLabel);
+    if(!ps.availableCans && ps.availableCans!==0) return null;
+    return Number(ps.availableCans) - (Number(ps.shippedCans)||0);
+  }
   function availableCartonsFor(productLabel){
     const ps = getProductStock(productLabel);
-    const cans = Number(ps.availableCans);
     const perCarton = Number(ps.cansPerCarton);
-    if(!ps.availableCans && ps.availableCans!==0) return null; // no cans entered yet
-    if(!perCarton) return null;
-    return Math.floor(cans / perCarton);
+    const cans = onHandCans(productLabel);
+    if(cans===null || !perCarton) return null;
+    return Math.max(0, Math.floor(cans / perCarton));
   }
 
   // Rank orders by urgency: confirmed priority first (untriaged bubbles to top so
@@ -656,15 +664,18 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   function renderProductStockPanel(){
     const labels = distinctProductLabels();
     if(!labels.length){
-      $('productStockBody').innerHTML = `<tr class="empty-row"><td colspan="5">No products on any order yet.</td></tr>`;
+      $('productStockBody').innerHTML = `<tr class="empty-row"><td colspan="7">No products on any order yet.</td></tr>`;
       return;
     }
     $('productStockBody').innerHTML = labels.map(label=>{
       const ps = getProductStock(label);
       const cartons = availableCartonsFor(label);
+      const onHand = onHandCans(label);
       return `<tr>
         <td>${label}</td>
         <td><input type="number" min="0" step="1" style="width:90px;" data-cans-for="${label}" value="${ps.availableCans!==''&&ps.availableCans!=null?ps.availableCans:''}"></td>
+        <td><input type="number" min="0" step="1" style="width:90px;" data-shipped-for="${label}" value="${ps.shippedCans!==''&&ps.shippedCans!=null?ps.shippedCans:''}"></td>
+        <td class="num">${onHand===null ? '<span class="muted">enter produced</span>' : onHand}</td>
         <td><input type="number" min="1" step="1" style="width:90px;" data-per-carton-for="${label}" value="${ps.cansPerCarton!==''&&ps.cansPerCarton!=null?ps.cansPerCarton:''}"></td>
         <td class="num">${cartons===null ? '<span class="muted">set both fields</span>' : cartons}</td>
         <td><button class="btn btn-flat small-btn" data-product-history="${label}">History</button></td>
@@ -673,6 +684,9 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
 
     $('productStockBody').querySelectorAll('[data-cans-for]').forEach(inp=>{
       inp.addEventListener('change', ()=>onProductStockChange(inp.dataset.cansFor, 'availableCans', inp.value));
+    });
+    $('productStockBody').querySelectorAll('[data-shipped-for]').forEach(inp=>{
+      inp.addEventListener('change', ()=>onProductStockChange(inp.dataset.shippedFor, 'shippedCans', inp.value));
     });
     $('productStockBody').querySelectorAll('[data-per-carton-for]').forEach(inp=>{
       inp.addEventListener('change', ()=>onProductStockChange(inp.dataset.perCartonFor, 'cansPerCarton', inp.value));
@@ -683,10 +697,10 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   }
 
   async function onProductStockChange(productLabel, field, value){
-    const ps = productStock[productLabel] || { availableCans:'', cansPerCarton:'', history:[] };
+    const ps = productStock[productLabel] || { availableCans:'', shippedCans:'', cansPerCarton:'', history:[] };
     const old = ps[field];
     ps[field] = value === '' ? '' : Number(value);
-    const fieldLabel = field==='availableCans' ? 'Available stock (cans)' : 'Cans per carton';
+    const fieldLabel = field==='availableCans' ? 'Produced (cans)' : field==='shippedCans' ? 'Shipped (cans)' : 'Cans per carton';
     logHistory(ps, 'stock_update', `${fieldLabel}: ${old===''||old==null?'(none)':old} → ${ps[field]===''?'(none)':ps[field]}`);
     productStock[productLabel] = ps;
     await persistProductStock();

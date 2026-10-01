@@ -182,17 +182,16 @@
         <div class="panel-head"><h2>Product stock</h2></div>
         <div class="panel-body">
           <div class="share-note" style="margin:0 0 10px;font-size:11px;color:#8a939b;">
-            Enter the cans <strong>produced</strong> and the cans <strong>shipped</strong> (invoiced out). <strong>Stock on hand = produced &minus; shipped</strong>.
-            Stock on hand is allocated to the <strong>most urgent order first</strong>, converted to cartons automatically.
+            Enter the <strong>stock on hand in cans</strong> (what is available after shipping) and the <strong>total cans shipped</strong> (invoiced out).
+            Shipped cans count towards order progress but do not change stock on hand. Both are allocated to the <strong>most urgent order first</strong>, converted to cartons automatically.
           </div>
           <div style="overflow-x:auto;">
             <table class="orders" id="productStockTable">
               <thead>
                 <tr>
                   <th>Can description</th>
-                  <th>Produced (cans)</th>
-                  <th>Shipped (cans)</th>
                   <th>Stock on hand (cans)</th>
+                  <th>Shipped (cans)</th>
                   <th>Cans per carton</th>
                   <th>Stock on hand (cartons)</th>
                   <th>Actions</th>
@@ -369,7 +368,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   const DEFAULT_CANS_PER_CARTON = 24;
 
   let orders = [];
-  let productStock = {}; // productLabel -> { availableCans (= produced), shippedCans, cansPerCarton, history }
+  let productStock = {}; // productLabel -> { availableCans (= stock on hand), shippedCans, cansPerCarton, history }
   let activeTab = 'active';
   let customerFilter = '__all__';
   let currentView = 'orders';
@@ -470,18 +469,18 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
       history: ps.history || []
     };
   }
-  // On hand = produced (stored as availableCans) minus shipped. null until produced is entered.
-  function onHandCans(productLabel){
-    const ps = getProductStock(productLabel);
-    if(!ps.availableCans && ps.availableCans!==0) return null;
-    return Number(ps.availableCans) - (Number(ps.shippedCans)||0);
+  // Shipped cans never reduce stock on hand; they only count towards order progress.
+  function shippedCartonsFor(productLabel){
+    const perCarton = perCartonFor(productLabel);
+    return Math.floor((Number(getProductStock(productLabel).shippedCans)||0) / perCarton);
   }
   function availableCartonsFor(productLabel){
     const ps = getProductStock(productLabel);
+    const cans = Number(ps.availableCans);
     const perCarton = Number(ps.cansPerCarton);
-    const cans = onHandCans(productLabel);
-    if(cans===null || !perCarton) return null;
-    return Math.max(0, Math.floor(cans / perCarton));
+    if(!ps.availableCans && ps.availableCans!==0) return null; // no cans entered yet
+    if(!perCarton) return null;
+    return Math.floor(cans / perCarton);
   }
 
   // Rank orders by urgency: confirmed priority first (untriaged bubbles to top so
@@ -501,7 +500,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   // the MOST URGENT order first, then whatever is left flows to the next, etc.
   // Only active (not shipped/cancelled) orders draw from stock.
   function computeAllocations(){
-    const alloc = {}; // orderId -> { allocated:Number|null, known:Bool }
+    const alloc = {}; // orderId -> { allocated:Number|null (from stock on hand), shipped:Number, known:Bool }
     const byProduct = {};
     orders.forEach(o=>{
       if(!ACTIVE_STATUSES.includes(o.status)) return;
@@ -511,10 +510,15 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
       const avail = availableCartonsFor(label);
       const known = avail !== null;
       let remaining = known ? avail : 0;
+      let shippedLeft = shippedCartonsFor(label);
       byProduct[label].slice().sort(urgencyComparator).forEach(o=>{
-        const need = Number(o.cartons)||0;
+        const ordered = Number(o.cartons)||0;
+        // shipped cartons cover the most urgent order first; stock on hand covers what's left
+        const shipped = Math.min(shippedLeft, ordered);
+        shippedLeft -= shipped;
+        const need = ordered - shipped;
         const give = known ? Math.min(remaining, need) : null;
-        alloc[o.id] = { allocated: give, known };
+        alloc[o.id] = { allocated: give, shipped, known };
         if(known) remaining -= give;
       });
     });
@@ -538,8 +542,8 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
     const ordered = Number(order.cartons)||0;
     if(order.status==='shipped') return ordered;
     const a = alloc[order.id];
-    if(a && a.known) return Math.min(a.allocated, ordered);
-    return 0;
+    if(!a) return 0;
+    return Math.min(a.shipped + (a.known ? a.allocated : 0), ordered);
   }
   function pctOf(fulfilled, ordered){
     if(ordered<=0) return fulfilled>0 ? 100 : 0;
@@ -664,18 +668,16 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
   function renderProductStockPanel(){
     const labels = distinctProductLabels();
     if(!labels.length){
-      $('productStockBody').innerHTML = `<tr class="empty-row"><td colspan="7">No products on any order yet.</td></tr>`;
+      $('productStockBody').innerHTML = `<tr class="empty-row"><td colspan="6">No products on any order yet.</td></tr>`;
       return;
     }
     $('productStockBody').innerHTML = labels.map(label=>{
       const ps = getProductStock(label);
       const cartons = availableCartonsFor(label);
-      const onHand = onHandCans(label);
       return `<tr>
         <td>${label}</td>
         <td><input type="number" min="0" step="1" style="width:90px;" data-cans-for="${label}" value="${ps.availableCans!==''&&ps.availableCans!=null?ps.availableCans:''}"></td>
         <td><input type="number" min="0" step="1" style="width:90px;" data-shipped-for="${label}" value="${ps.shippedCans!==''&&ps.shippedCans!=null?ps.shippedCans:''}"></td>
-        <td class="num">${onHand===null ? '<span class="muted">enter produced</span>' : onHand}</td>
         <td><input type="number" min="1" step="1" style="width:90px;" data-per-carton-for="${label}" value="${ps.cansPerCarton!==''&&ps.cansPerCarton!=null?ps.cansPerCarton:''}"></td>
         <td class="num">${cartons===null ? '<span class="muted">set both fields</span>' : cartons}</td>
         <td><button class="btn btn-flat small-btn" data-product-history="${label}">History</button></td>
@@ -700,7 +702,7 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
     const ps = productStock[productLabel] || { availableCans:'', shippedCans:'', cansPerCarton:'', history:[] };
     const old = ps[field];
     ps[field] = value === '' ? '' : Number(value);
-    const fieldLabel = field==='availableCans' ? 'Produced (cans)' : field==='shippedCans' ? 'Shipped (cans)' : 'Cans per carton';
+    const fieldLabel = field==='availableCans' ? 'Stock on hand (cans)' : field==='shippedCans' ? 'Shipped (cans)' : 'Cans per carton';
     logHistory(ps, 'stock_update', `${fieldLabel}: ${old===''||old==null?'(none)':old} → ${ps[field]===''?'(none)':ps[field]}`);
     productStock[productLabel] = ps;
     await persistProductStock();
@@ -822,13 +824,14 @@ const API_URL = 'https://br-square-cell-aykkkur5-ordersapi.compute.c-5.us-east-2
     $('o_computedUrgency').value = urg ? urg.label : '—';
   }
   function updateStockGapField(){
-    let allocated = null;
+    let allocated = null, shipped = 0;
     if(editingId){
       const a = computeAllocations()[editingId];
       allocated = a && a.known ? a.allocated : null;
+      shipped = a ? a.shipped : 0;
     }
     $('o_availableStock').value = allocated===null ? '—' : allocated;
-    const gap = stockGapInfo($('o_cartons').value, allocated);
+    const gap = stockGapInfo((Number($('o_cartons').value)||0) - shipped, allocated);
     $('o_stockGap').value = gap ? gap.label : '—';
   }
 
